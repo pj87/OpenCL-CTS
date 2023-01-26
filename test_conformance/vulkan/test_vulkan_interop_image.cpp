@@ -250,16 +250,34 @@ int run_test_with_two_queue(cl_context &context, cl_command_queue &cmd_queue1,
     clExternalSemaphore *clVk2CLExternalSemaphore = NULL;
     clExternalSemaphore *clCl2VkExternalSemaphore = NULL;
 
-    clVk2CLExternalSemaphore = new clExternalSemaphore(
-        vkVk2CLSemaphore, context, vkExternalSemaphoreHandleType, deviceId);
-    clCl2VkExternalSemaphore = new clExternalSemaphore(
-        vkCl2VkSemaphore, context, vkExternalSemaphoreHandleType, deviceId);
-
     std::vector<VulkanDeviceMemory *> vkNonDedicatedImage2DListDeviceMemory1;
     std::vector<VulkanDeviceMemory *> vkNonDedicatedImage2DListDeviceMemory2;
     std::vector<clExternalMemoryImage *> nonDedicatedExternalMemory1;
     std::vector<clExternalMemoryImage *> nonDedicatedExternalMemory2;
     std::vector<char> vkImage2DShader;
+
+    VkResult vkStatus = VK_SUCCESS;
+    VkFence fence1, fence2;
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.pNext = nullptr;
+    fenceInfo.flags = 0;
+
+    vkStatus = vkCreateFence(vkDevice, &fenceInfo, nullptr, &fence1);
+
+    if (vkStatus != VK_SUCCESS)
+    {
+        print_error(vkStatus, "Error: Failed create fence.\n");
+        goto CLEANUP;
+    }
+
+    vkStatus = vkCreateFence(vkDevice, &fenceInfo, nullptr, &fence2);
+
+    if (vkStatus != VK_SUCCESS)
+    {
+        print_error(vkStatus, "Error: Failed create fence.\n");
+        goto CLEANUP;
+    }
 
     for (size_t fIdx = 0; fIdx < vkFormatList.size(); fIdx++)
     {
@@ -485,7 +503,8 @@ int run_test_with_two_queue(cl_context &context, cl_command_queue &cmd_queue1,
                             VulkanImageViewList &vkImage2DViewList =
                                 vkNonDedicatedImage2DViewList;
 
-                            clCl2VkExternalSemaphore->signal(cmd_queue1);
+                            vkWaitForFences(vkDevice, 1, &fence1, VK_TRUE,
+                                            UINT64_MAX);
                             if (!useSingleImageKernel)
                             {
                                 for (size_t i2DIdx = 0;
@@ -584,10 +603,15 @@ int run_test_with_two_queue(cl_context &context, cl_command_queue &cmd_queue1,
                                         }
                                     }
                                 }
-                                vkQueue.submit(vkCl2VkSemaphore,
-                                               vkShaderCommandBuffer,
-                                               vkVk2CLSemaphore);
-                                clVk2CLExternalSemaphore->wait(cmd_queue1);
+
+                                vkQueue.submit(vkShaderCommandBuffer, fence2);
+                                // vkWaitForFences(vkDevice, 1, &fence1,
+                                // VK_TRUE,
+                                //                 UINT64_MAX);
+                                // clWait(cmd_queue1);
+                                cl_event event;
+                                clWaitForEvents(1, &event);
+
                                 switch (num2DImages)
                                 {
                                     case 2:
@@ -669,7 +693,8 @@ int run_test_with_two_queue(cl_context &context, cl_command_queue &cmd_queue1,
                                         "Error: Failed to set arg values \n");
                                     goto CLEANUP;
                                 }
-                                // clVk2CLExternalSemaphore->wait(cmd_queue1);
+                                vkWaitForFences(vkDevice, 1, &fence1, VK_TRUE,
+                                                UINT64_MAX);
                                 size_t global_work_size[3] = { width, height,
                                                                1 };
                                 cl_event first_launch;
@@ -691,7 +716,8 @@ int run_test_with_two_queue(cl_context &context, cl_command_queue &cmd_queue1,
                                 }
 
                                 clFinish(cmd_queue2);
-                                clCl2VkExternalSemaphore->signal(cmd_queue2);
+                                vkWaitForFences(vkDevice, 1, &fence2, VK_TRUE,
+                                                UINT64_MAX);
                             }
 
                             unsigned int flags = 0;
@@ -779,11 +805,12 @@ int run_test_with_two_queue(cl_context &context, cl_command_queue &cmd_queue1,
         vkImage2DShader.clear();
     }
 CLEANUP:
-    if (clVk2CLExternalSemaphore) delete clVk2CLExternalSemaphore;
-    if (clCl2VkExternalSemaphore) delete clCl2VkExternalSemaphore;
-
     if (srcBufferPtr) free(srcBufferPtr);
     if (dstBufferPtr) free(dstBufferPtr);
+
+    vkDestroyFence(vkDevice, fence1, nullptr);
+    vkDestroyFence(vkDevice, fence2, nullptr);
+
     return err;
 }
 
@@ -846,16 +873,34 @@ int run_test_with_one_queue(cl_context &context, cl_command_queue &cmd_queue1,
     clExternalSemaphore *clVk2CLExternalSemaphore = NULL;
     clExternalSemaphore *clCl2VkExternalSemaphore = NULL;
 
-    clVk2CLExternalSemaphore = new clExternalSemaphore(
-        vkVk2CLSemaphore, context, vkExternalSemaphoreHandleType, deviceId);
-    clCl2VkExternalSemaphore = new clExternalSemaphore(
-        vkCl2VkSemaphore, context, vkExternalSemaphoreHandleType, deviceId);
-
     std::vector<VulkanDeviceMemory *> vkNonDedicatedImage2DListDeviceMemory1;
     std::vector<VulkanDeviceMemory *> vkNonDedicatedImage2DListDeviceMemory2;
     std::vector<clExternalMemoryImage *> nonDedicatedExternalMemory1;
     std::vector<clExternalMemoryImage *> nonDedicatedExternalMemory2;
     std::vector<char> vkImage2DShader;
+
+    VkResult vkStatus = VK_SUCCESS;
+    VkFence fence1, fence2;
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.pNext = nullptr;
+    fenceInfo.flags = 0;
+
+    vkStatus = vkCreateFence(vkDevice, &fenceInfo, nullptr, &fence1);
+
+    if (vkStatus != VK_SUCCESS)
+    {
+        print_error(vkStatus, "Error: Failed create fence.\n");
+        goto CLEANUP;
+    }
+
+    vkStatus = vkCreateFence(vkDevice, &fenceInfo, nullptr, &fence2);
+
+    if (vkStatus != VK_SUCCESS)
+    {
+        print_error(vkStatus, "Error: Failed create fence.\n");
+        goto CLEANUP;
+    }
 
     for (size_t fIdx = 0; fIdx < vkFormatList.size(); fIdx++)
     {
@@ -1060,7 +1105,8 @@ int run_test_with_one_queue(cl_context &context, cl_command_queue &cmd_queue1,
                             VulkanImageViewList &vkImage2DViewList =
                                 vkNonDedicatedImage2DViewList;
 
-                            clCl2VkExternalSemaphore->signal(cmd_queue1);
+                            clFinish(cmd_queue1);
+
                             if (!useSingleImageKernel)
                             {
                                 for (size_t i2DIdx = 0;
@@ -1159,10 +1205,9 @@ int run_test_with_one_queue(cl_context &context, cl_command_queue &cmd_queue1,
                                         }
                                     }
                                 }
-                                vkQueue.submit(vkCl2VkSemaphore,
-                                               vkShaderCommandBuffer,
-                                               vkVk2CLSemaphore);
-                                clVk2CLExternalSemaphore->wait(cmd_queue1);
+                                vkQueue.submit(vkShaderCommandBuffer, fence2);
+                                vkWaitForFences(vkDevice, 1, &fence1, VK_TRUE,
+                                                UINT64_MAX);
                                 switch (num2DImages)
                                 {
                                     case 1:
@@ -1224,7 +1269,7 @@ int run_test_with_one_queue(cl_context &context, cl_command_queue &cmd_queue1,
                                 {
                                     goto CLEANUP;
                                 }
-                                clCl2VkExternalSemaphore->signal(cmd_queue1);
+                                clFinish(cmd_queue1);
                             }
 
                             unsigned int flags = 0;
@@ -1310,11 +1355,13 @@ int run_test_with_one_queue(cl_context &context, cl_command_queue &cmd_queue1,
         vkImage2DShader.clear();
     }
 CLEANUP:
-    if (clVk2CLExternalSemaphore) delete clVk2CLExternalSemaphore;
-    if (clCl2VkExternalSemaphore) delete clCl2VkExternalSemaphore;
 
     if (srcBufferPtr) free(srcBufferPtr);
     if (dstBufferPtr) free(dstBufferPtr);
+
+    vkDestroyFence(vkDevice, fence1, nullptr);
+    vkDestroyFence(vkDevice, fence2, nullptr);
+
     return err;
 }
 

@@ -136,11 +136,6 @@ int run_test_with_two_queue(cl_context &context, cl_command_queue &cmd_queue1,
     VulkanDescriptorSet vkDescriptorSet(vkDevice, vkDescriptorPool,
                                         vkDescriptorSetLayout);
 
-    clVk2CLExternalSemaphore = new clExternalSemaphore(
-        vkVk2CLSemaphore, context, vkExternalSemaphoreHandleType, deviceId);
-    clCl2VkExternalSemaphore = new clExternalSemaphore(
-        vkCl2VkSemaphore, context, vkExternalSemaphoreHandleType, deviceId);
-
     const uint32_t maxIter = innerIterations;
     VulkanCommandPool vkCommandPool(vkDevice);
     VulkanCommandBuffer vkCommandBuffer(vkDevice, vkCommandPool);
@@ -153,6 +148,21 @@ int run_test_with_two_queue(cl_context &context, cl_command_queue &cmd_queue1,
     vkParamsDeviceMemory.bindBuffer(vkParamsBuffer);
     std::vector<VulkanDeviceMemory *> vkBufferListDeviceMemory;
     std::vector<clExternalMemory *> externalMemory;
+
+    VkFence fence;
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.pNext = nullptr;
+    fenceInfo.flags = 0;
+
+    VkResult vkStatus = vkCreateFence(vkDevice, &fenceInfo, nullptr, &fence);
+
+    if (vkStatus != VK_SUCCESS)
+    {
+        print_error(vkStatus, "Error: Failed create fence.\n");
+        goto CLEANUP;
+    }
+
     for (size_t emhtIdx = 0; emhtIdx < vkExternalMemoryHandleTypeList.size();
          emhtIdx++)
     {
@@ -229,14 +239,13 @@ int run_test_with_two_queue(cl_context &context, cl_command_queue &cmd_queue1,
 
                 if (iter == 0)
                 {
-                    vkQueue.submit(vkCommandBuffer, vkVk2CLSemaphore);
+                    vkQueue.submit(vkCommandBuffer, fence);
                 }
                 else
                 {
-                    vkQueue.submit(vkCl2VkSemaphore, vkCommandBuffer,
-                                   vkVk2CLSemaphore);
+                    vkQueue.submit(vkCommandBuffer, fence);
                 }
-                clVk2CLExternalSemaphore->wait(cmd_queue1);
+                vkWaitForFences(vkDevice, 1, &fence, VK_TRUE, UINT64_MAX);
 
                 err = clSetKernelArg(update_buffer_kernel, 0, sizeof(uint32_t),
                                      (void *)&bufferSize);
@@ -288,7 +297,7 @@ int run_test_with_two_queue(cl_context &context, cl_command_queue &cmd_queue1,
 
                 if (iter != (maxIter - 1))
                 {
-                    clCl2VkExternalSemaphore->signal(cmd_queue2);
+                    vkWaitForFences(vkDevice, 1, &fence, VK_TRUE, UINT64_MAX);
                 }
             }
             error_2 = (uint8_t *)malloc(sizeof(uint8_t));
@@ -387,10 +396,10 @@ CLEANUP:
     }
     if (program) clReleaseProgram(program);
     if (kernel_cq) clReleaseKernel(kernel_cq);
-    if (clVk2CLExternalSemaphore) delete clVk2CLExternalSemaphore;
-    if (clCl2VkExternalSemaphore) delete clCl2VkExternalSemaphore;
     if (error_2) free(error_2);
     if (error_1) clReleaseMemObject(error_1);
+
+    vkDestroyFence(vkDevice, fence, nullptr);
 
     return err;
 }
@@ -405,8 +414,6 @@ int run_test_with_one_queue(cl_context &context, cl_command_queue &cmd_queue1,
     uint8_t *error_2;
     cl_mem error_1;
     cl_kernel update_buffer_kernel;
-    clExternalSemaphore *clVk2CLExternalSemaphore = NULL;
-    clExternalSemaphore *clCl2VkExternalSemaphore = NULL;
     int err = CL_SUCCESS;
 
     const std::vector<VulkanExternalMemoryHandleType>
@@ -434,10 +441,6 @@ int run_test_with_one_queue(cl_context &context, cl_command_queue &cmd_queue1,
     VulkanDescriptorSet vkDescriptorSet(vkDevice, vkDescriptorPool,
                                         vkDescriptorSetLayout);
 
-    clVk2CLExternalSemaphore = new clExternalSemaphore(
-        vkVk2CLSemaphore, context, vkExternalSemaphoreHandleType, deviceId);
-    clCl2VkExternalSemaphore = new clExternalSemaphore(
-        vkCl2VkSemaphore, context, vkExternalSemaphoreHandleType, deviceId);
     const uint32_t maxIter = innerIterations;
     VulkanCommandPool vkCommandPool(vkDevice);
     VulkanCommandBuffer vkCommandBuffer(vkDevice, vkCommandPool);
@@ -450,6 +453,20 @@ int run_test_with_one_queue(cl_context &context, cl_command_queue &cmd_queue1,
     vkParamsDeviceMemory.bindBuffer(vkParamsBuffer);
     std::vector<VulkanDeviceMemory *> vkBufferListDeviceMemory;
     std::vector<clExternalMemory *> externalMemory;
+
+    VkFence fence;
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.pNext = nullptr;
+    fenceInfo.flags = 0;
+
+    VkResult vkStatus = vkCreateFence(vkDevice, &fenceInfo, nullptr, &fence);
+
+    if (vkStatus != VK_SUCCESS)
+    {
+        print_error(vkStatus, "Error: Failed create fence.\n");
+        goto CLEANUP;
+    }
 
     for (size_t emhtIdx = 0; emhtIdx < vkExternalMemoryHandleTypeList.size();
          emhtIdx++)
@@ -528,14 +545,13 @@ int run_test_with_one_queue(cl_context &context, cl_command_queue &cmd_queue1,
             {
                 if (iter == 0)
                 {
-                    vkQueue.submit(vkCommandBuffer, vkVk2CLSemaphore);
+                    vkQueue.submit(vkCommandBuffer, fence);
                 }
                 else
                 {
-                    vkQueue.submit(vkCl2VkSemaphore, vkCommandBuffer,
-                                   vkVk2CLSemaphore);
+                    vkQueue.submit(vkCommandBuffer, fence);
                 }
-                clVk2CLExternalSemaphore->wait(cmd_queue1);
+                vkWaitForFences(vkDevice, 1, &fence, VK_TRUE, UINT64_MAX);
 
                 err = clSetKernelArg(update_buffer_kernel, 0, sizeof(uint32_t),
                                      (void *)&bufferSize);
@@ -564,7 +580,8 @@ int run_test_with_one_queue(cl_context &context, cl_command_queue &cmd_queue1,
                 }
                 if (iter != (maxIter - 1))
                 {
-                    clCl2VkExternalSemaphore->signal(cmd_queue1);
+                    vkWaitForFences(vkDevice, 1, &fence, VK_TRUE, UINT64_MAX);
+                    clFinish(cmd_queue1);
                 }
             }
             error_2 = (uint8_t *)malloc(sizeof(uint8_t));
@@ -656,10 +673,11 @@ CLEANUP:
             delete externalMemory[i];
         }
     }
-    if (clVk2CLExternalSemaphore) delete clVk2CLExternalSemaphore;
-    if (clCl2VkExternalSemaphore) delete clCl2VkExternalSemaphore;
     if (error_2) free(error_2);
     if (error_1) clReleaseMemObject(error_1);
+
+    vkDestroyFence(vkDevice, fence, nullptr);
+
     return err;
 }
 
@@ -706,10 +724,6 @@ int run_test_with_multi_import_same_ctx(
     VulkanDescriptorSet vkDescriptorSet(vkDevice, vkDescriptorPool,
                                         vkDescriptorSetLayout);
 
-    clVk2CLExternalSemaphore = new clExternalSemaphore(
-        vkVk2CLSemaphore, context, vkExternalSemaphoreHandleType, deviceId);
-    clCl2VkExternalSemaphore = new clExternalSemaphore(
-        vkCl2VkSemaphore, context, vkExternalSemaphoreHandleType, deviceId);
     const uint32_t maxIter = innerIterations;
     VulkanCommandPool vkCommandPool(vkDevice);
     VulkanCommandBuffer vkCommandBuffer(vkDevice, vkCommandPool);
@@ -723,6 +737,19 @@ int run_test_with_multi_import_same_ctx(
     std::vector<VulkanDeviceMemory *> vkBufferListDeviceMemory;
     std::vector<std::vector<clExternalMemory *>> externalMemory;
 
+    VkFence fence;
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.pNext = nullptr;
+    fenceInfo.flags = 0;
+
+    VkResult vkStatus = vkCreateFence(vkDevice, &fenceInfo, nullptr, &fence);
+
+    if (vkStatus != VK_SUCCESS)
+    {
+        print_error(vkStatus, "Error: Failed create fence.\n");
+        goto CLEANUP;
+    }
 
     for (size_t emhtIdx = 0; emhtIdx < vkExternalMemoryHandleTypeList.size();
          emhtIdx++)
@@ -834,14 +861,13 @@ int run_test_with_multi_import_same_ctx(
                 {
                     if (iter == 0)
                     {
-                        vkQueue.submit(vkCommandBuffer, vkVk2CLSemaphore);
+                        vkQueue.submit(vkCommandBuffer, fence);
                     }
                     else
                     {
-                        vkQueue.submit(vkCl2VkSemaphore, vkCommandBuffer,
-                                       vkVk2CLSemaphore);
+                        vkQueue.submit(vkCommandBuffer, fence);
                     }
-                    clVk2CLExternalSemaphore->wait(cmd_queue1);
+                    vkWaitForFences(vkDevice, 1, &fence, VK_TRUE, UINT64_MAX);
                     for (uint8_t launchIter = 0; launchIter < numImports;
                          launchIter++)
                     {
@@ -876,7 +902,8 @@ int run_test_with_multi_import_same_ctx(
                     }
                     if (iter != (maxIter - 1))
                     {
-                        clCl2VkExternalSemaphore->signal(cmd_queue1);
+                        vkWaitForFences(vkDevice, 1, &fence, VK_TRUE,
+                                        UINT64_MAX);
                     }
                 }
                 error_2 = (uint8_t *)malloc(sizeof(uint8_t));
@@ -987,10 +1014,11 @@ CLEANUP:
             }
         }
     }
-    if (clVk2CLExternalSemaphore) delete clVk2CLExternalSemaphore;
-    if (clCl2VkExternalSemaphore) delete clCl2VkExternalSemaphore;
     if (error_2) free(error_2);
     if (error_1) clReleaseMemObject(error_1);
+
+    vkDestroyFence(vkDevice, fence, nullptr);
+
     return err;
 }
 
@@ -1042,16 +1070,6 @@ int run_test_with_multi_import_diff_ctx(
     VulkanDescriptorSet vkDescriptorSet(vkDevice, vkDescriptorPool,
                                         vkDescriptorSetLayout);
 
-    clVk2CLExternalSemaphore = new clExternalSemaphore(
-        vkVk2CLSemaphore, context, vkExternalSemaphoreHandleType, deviceId);
-    clCl2VkExternalSemaphore = new clExternalSemaphore(
-        vkCl2VkSemaphore, context, vkExternalSemaphoreHandleType, deviceId);
-
-    clVk2CLExternalSemaphore2 = new clExternalSemaphore(
-        vkVk2CLSemaphore, context2, vkExternalSemaphoreHandleType, deviceId);
-    clCl2VkExternalSemaphore2 = new clExternalSemaphore(
-        vkCl2VkSemaphore, context2, vkExternalSemaphoreHandleType, deviceId);
-
     const uint32_t maxIter = innerIterations;
     VulkanCommandPool vkCommandPool(vkDevice);
     VulkanCommandBuffer vkCommandBuffer(vkDevice, vkCommandPool);
@@ -1065,6 +1083,19 @@ int run_test_with_multi_import_diff_ctx(
     std::vector<VulkanDeviceMemory *> vkBufferListDeviceMemory;
     std::vector<std::vector<clExternalMemory *>> externalMemory1;
     std::vector<std::vector<clExternalMemory *>> externalMemory2;
+
+    VkFence fence;
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.pNext = nullptr;
+    fenceInfo.flags = 0;
+
+    VkResult vkStatus = vkCreateFence(vkDevice, &fenceInfo, nullptr, &fence);
+    if (vkStatus != VK_SUCCESS)
+    {
+        print_error(vkStatus, "Error: Failed create fence.\n");
+        goto CLEANUP;
+    }
 
     for (size_t emhtIdx = 0; emhtIdx < vkExternalMemoryHandleTypeList.size();
          emhtIdx++)
@@ -1194,14 +1225,13 @@ int run_test_with_multi_import_diff_ctx(
                 {
                     if (iter == 0)
                     {
-                        vkQueue.submit(vkCommandBuffer, vkVk2CLSemaphore);
+                        vkQueue.submit(vkCommandBuffer, fence);
                     }
                     else
                     {
-                        vkQueue.submit(vkCl2VkSemaphore, vkCommandBuffer,
-                                       vkVk2CLSemaphore);
+                        vkQueue.submit(vkCommandBuffer, fence);
                     }
-                    clVk2CLExternalSemaphore->wait(cmd_queue1);
+                    vkWaitForFences(vkDevice, 1, &fence, VK_TRUE, UINT64_MAX);
 
                     for (uint8_t launchIter = 0; launchIter < numImports;
                          launchIter++)
@@ -1237,7 +1267,8 @@ int run_test_with_multi_import_diff_ctx(
                     }
                     if (iter != (maxIter - 1))
                     {
-                        clCl2VkExternalSemaphore->signal(cmd_queue1);
+                        vkWaitForFences(vkDevice, 1, &fence, VK_TRUE,
+                                        UINT64_MAX);
                     }
                 }
                 clFinish(cmd_queue1);
@@ -1245,14 +1276,13 @@ int run_test_with_multi_import_diff_ctx(
                 {
                     if (iter == 0)
                     {
-                        vkQueue.submit(vkCommandBuffer, vkVk2CLSemaphore);
+                        vkQueue.submit(vkCommandBuffer, fence);
                     }
                     else
                     {
-                        vkQueue.submit(vkCl2VkSemaphore, vkCommandBuffer,
-                                       vkVk2CLSemaphore);
+                        vkQueue.submit(vkCommandBuffer, fence);
                     }
-                    clVk2CLExternalSemaphore2->wait(cmd_queue2);
+                    vkWaitForFences(vkDevice, 1, &fence, VK_TRUE, UINT64_MAX);
 
                     for (uint8_t launchIter = 0; launchIter < numImports;
                          launchIter++)
@@ -1288,7 +1318,8 @@ int run_test_with_multi_import_diff_ctx(
                     }
                     if (iter != (maxIter - 1))
                     {
-                        clCl2VkExternalSemaphore2->signal(cmd_queue2);
+                        vkWaitForFences(vkDevice, 1, &fence, VK_TRUE,
+                                        UINT64_MAX);
                     }
                 }
                 clFinish(cmd_queue2);
@@ -1474,13 +1505,12 @@ CLEANUP:
             }
         }
     }
-    if (clVk2CLExternalSemaphore) delete clVk2CLExternalSemaphore;
-    if (clCl2VkExternalSemaphore) delete clCl2VkExternalSemaphore;
-    if (clVk2CLExternalSemaphore2) delete clVk2CLExternalSemaphore2;
-    if (clCl2VkExternalSemaphore2) delete clCl2VkExternalSemaphore2;
     if (error_3) free(error_3);
     if (error_1) clReleaseMemObject(error_1);
     if (error_2) clReleaseMemObject(error_2);
+
+    vkDestroyFence(vkDevice, fence, nullptr);
+
     return err;
 }
 
