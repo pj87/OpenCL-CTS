@@ -952,62 +952,71 @@ struct MutableDispatchSVMArguments : public BasicMutableCommandBufferTest
     {
         BasicMutableCommandBufferTest::SetUp(elements);
 
-        const char *set_kernel_exec_info_svm_ptrs_kernel =
-            R"(struct BufPtrs;
-
+        const char *svm_arguments_kernel =
+            R"(
             typedef struct {
-                __global int *pA;
-                __global int *pB;
-                __global int *pC;
-            } BufPtrs;
-            __kernel void set_kernel_exec_info_test(__global BufPtrs* pBufs)
+                global int* ptr;
+            } wrapper;
+            __kernel void test_svm_arguments(__global wrapper* pWrapper)
             {
-                size_t i;
-               i = get_global_id(0);
-                pBufs->pA[i]++;
-                pBufs->pB[i]++;
-                pBufs->pC[i]++;
+                size_t i = get_global_id(0);
+                pWrapper->ptr[i]++;
             })";
 
         create_single_kernel_helper(context, &program, &kernel, 1,
-                                    &set_kernel_exec_info_svm_ptrs_kernel,
-                                    "set_kernel_exec_info_test");
+                                    &svm_arguments_kernel,
+                                    "test_svm_arguments");
 
         return 0;
     }
 
     cl_int Run() override
     {
-        cl_ndrange_kernel_command_properties_khr props[] = {
-            CL_MUTABLE_DISPATCH_UPDATABLE_FIELDS_KHR,
-            CL_MUTABLE_DISPATCH_ARGUMENTS_KHR, 0
-        };
+        const int zero = 0;
+        cl_int error;
 
-        size_t s = num_elements * sizeof(int);
-        BufPtrs *pBuf = (BufPtrs *)clSVMAlloc(context, CL_MEM_READ_WRITE,
-                                              sizeof(BufPtrs), 0);
+        // Allocate and initialize SVM for initial execution
 
-        pBuf->pA = (int *)clSVMAlloc(context, CL_MEM_READ_WRITE, s, 0);
-        pBuf->pB = (int *)clSVMAlloc(context, CL_MEM_READ_WRITE, s, 0);
-        pBuf->pC = (int *)clSVMAlloc(context, CL_MEM_READ_WRITE, s, 0);
+        int* initWrapper = (int*)clSVMAlloc(context, CL_MEM_READ_WRITE, sizeof(int*), 0);
+        int* initBuffer = (int*)clSVMAlloc(context, CL_MEM_READ_WRITE, num_elements * sizeof(int), 0);
+        test_assert_error(initWrapper != nullptr && initBuffer != nullptr,
+                          "clSVMAlloc failed for initial execution")
 
-        BufPtrs *newBuf = (BufPtrs *)clSVMAlloc(context, CL_MEM_READ_WRITE,
-                                                sizeof(BufPtrs), 0);
+        error = clEnqueueSVMMemcpy(queue, CL_TRUE, initWrapper, &initBuffer, sizeof(int*), 0, nullptr, nullptr);
+        test_error(error, "clEnqueueSVMMemcpy failed for initWrapper");
 
-        newBuf->pA = (int *)clSVMAlloc(context, CL_MEM_READ_WRITE, s, 0);
-        newBuf->pB = (int *)clSVMAlloc(context, CL_MEM_READ_WRITE, s, 0);
-        newBuf->pC = (int *)clSVMAlloc(context, CL_MEM_READ_WRITE, s, 0);
+        error = clEnqueueSVMMemFill(queue, initBuffer, &zero, sizeof(zero), num_elements * sizeof(int), 0, nullptr, nullptr);
+        test_error(error, "clEnqueueSVMMemFill failed for initBuffer");
 
-        cl_int error = clSetKernelArgSVMPointer(kernel, 0, pBuf);
-        test_error(error, "clSetKernelArg failed");
+        // Allocate and initialize SVM for modified execution
+
+        int* newWrapper = (int*)clSVMAlloc(context, CL_MEM_READ_WRITE, sizeof(int), 0);
+        int* newBuffer = (int*)clSVMAlloc(context, CL_MEM_READ_WRITE, num_elements * sizeof(int), 0);
+        test_assert_error(newWrapper != nullptr && newBuffer != nullptr,
+                          "clSVMAlloc failed for modified execution")
+
+        error = clEnqueueSVMMemcpy(queue, CL_TRUE, newWrapper, &newBuffer, sizeof(int*), 0, nullptr, nullptr);
+        test_error(error, "clEnqueueSVMMemFill failed for newWrapper");
+
+        error = clEnqueueSVMMemFill(queue, newBuffer, &zero, sizeof(zero), num_elements * sizeof(int), 0, nullptr, nullptr);
+        test_error(error, "clEnqueueSVMMemFill failed for newB");
+
+        // Build and execute the command buffer for the initial execution
+
+        error = clSetKernelArgSVMPointer(kernel, 0, initWrapper);
+        test_error(error, "clSetKernelArg failed for initWrapper");
 
         error = clSetKernelExecInfo(kernel, CL_KERNEL_EXEC_INFO_SVM_PTRS,
-                                    sizeof(BufPtrs), pBuf);
-        test_error(error, "clSetKernelExecInfo failed");
+                                    sizeof(initBuffer), &initBuffer);
+        test_error(error, "clSetKernelExecInfo failed for initBuffer");
 
+        cl_ndrange_kernel_command_properties_khr props[] = {
+            CL_MUTABLE_DISPATCH_UPDATABLE_FIELDS_KHR,
+            CL_MUTABLE_DISPATCH_ARGUMENTS_KHR | CL_MUTABLE_DISPATCH_EXEC_INFO_KHR, 0
+        };
         error = clCommandNDRangeKernelKHR(
             command_buffer, nullptr, props, kernel, 1, nullptr,
-            &global_work_size, nullptr, 0, nullptr, nullptr, &command);
+            &num_elements, nullptr, 0, nullptr, nullptr, &command);
         test_error(error, "clCommandNDRangeKernelKHR failed");
 
         error = clFinalizeCommandBufferKHR(command_buffer);
@@ -1017,54 +1026,89 @@ struct MutableDispatchSVMArguments : public BasicMutableCommandBufferTest
                                           nullptr, nullptr);
         test_error(error, "clEnqueueCommandBufferKHR failed");
 
-        cl_mutable_dispatch_exec_info_khr exec_info_list{
-            CL_KERNEL_EXEC_INFO_SVM_PTRS, sizeof(BufPtrs), newBuf
-        };
+        error = clFinish(queue);
+        test_error(error, "clFinish failed");
 
-        cl_mutable_dispatch_config_khr dispatch_config{
-            CL_STRUCTURE_TYPE_MUTABLE_DISPATCH_CONFIG_KHR,
-            nullptr,
-            command,
-            0 /* num_args */,
-            1 /* num_svm_arg */,
-            0 /* num_exec_infos */,
-            0 /* work_dim - 0 means no change to dimensions */,
-            nullptr /* arg_list */,
-            nullptr /* arg_svm_list - nullptr means no change*/,
-            &exec_info_list /* exec_info_list */,
-            nullptr /* global_work_offset */,
-            nullptr /* global_work_size */,
-            nullptr /* local_work_size */
-        };
-        cl_mutable_base_config_khr mutable_config{
-            CL_STRUCTURE_TYPE_MUTABLE_BASE_CONFIG_KHR, nullptr, 1,
-            &dispatch_config
-        };
+        // Check the results of the initial execution
+
+        error = clEnqueueSVMMap(queue, CL_TRUE, CL_MAP_READ, initBuffer, num_elements * sizeof(int), 0, nullptr, nullptr);
+        test_error(error, "clEnqueueSVMMap failed for initBuffer");
+
+        for (size_t i = 0; i < num_elements; i++) {
+            if (initBuffer[i] != 1) {
+                log_error("Initial verification failed at index %zu: Got %d, wanted 1\n",
+                    i, initBuffer[i]);
+                return TEST_FAIL;
+            }
+        }
+
+        clEnqueueSVMUnmap(queue, initBuffer, 0, nullptr, nullptr);
+        test_error(error, "clEnqueueSVMUnmap failed for initBuffer");
+
+        error = clFinish(queue);
+        test_error(error, "clFinish failed");
+
+        // Modify and execute the command buffer
+
+        cl_mutable_dispatch_arg_khr arg_svm{};
+        arg_svm.arg_index = 0;
+        arg_svm.arg_value = newWrapper;
+
+        cl_mutable_dispatch_exec_info_khr exec_info{};
+        exec_info.param_name = CL_KERNEL_EXEC_INFO_SVM_PTRS;
+        exec_info.param_value_size = sizeof(newBuffer);
+        exec_info.param_value = &newBuffer;
+
+        cl_mutable_dispatch_config_khr dispatch_config{};
+        dispatch_config.type = CL_STRUCTURE_TYPE_MUTABLE_DISPATCH_CONFIG_KHR;
+        dispatch_config.command = command;
+        dispatch_config.num_svm_args = 1;
+        dispatch_config.arg_svm_list = &arg_svm;
+        dispatch_config.num_exec_infos = 1;
+        dispatch_config.exec_info_list = &exec_info;
+
+        cl_mutable_base_config_khr mutable_config{};
+        mutable_config.type = CL_STRUCTURE_TYPE_MUTABLE_BASE_CONFIG_KHR;
+        mutable_config.num_mutable_dispatch = 1;
+        mutable_config.mutable_dispatch_list = &dispatch_config;
+
         error = clUpdateMutableCommandsKHR(command_buffer, &mutable_config);
         test_error(error, "clUpdateMutableCommandsKHR failed");
 
-        free(pBuf->pA);
-        free(pBuf->pB);
-        free(pBuf->pC);
-        clSVMFree(context, pBuf);
+        error = clEnqueueCommandBufferKHR(0, nullptr, command_buffer, 0,
+                                          nullptr, nullptr);
+        test_error(error, "clEnqueueCommandBufferKHR failed");
 
-        free(newBuf->pA);
-        free(newBuf->pB);
-        free(newBuf->pC);
-        clSVMFree(context, newBuf);
+        // Check the results of the modified execution
 
-        return CL_SUCCESS;
+        error = clEnqueueSVMMap(queue, CL_TRUE, CL_MAP_READ, newBuffer, num_elements * sizeof(int), 0, nullptr, nullptr);
+        test_error(error, "clEnqueueSVMMap failed for newBuffer");
+
+        for (size_t i = 0; i < num_elements; i++) {
+            if (newBuffer[i] != 1) {
+                log_error("Modified verification failed at index %zu: Got %d, wanted 1\n",
+                    i, newBuffer[i]);
+                return TEST_FAIL;
+            }
+        }
+
+        clEnqueueSVMUnmap(queue, newBuffer, 0, nullptr, nullptr);
+        test_error(error, "clEnqueueSVMUnmap failed for newBuffer");
+
+        error = clFinish(queue);
+        test_error(error, "clFinish failed");
+
+        // Clean up
+
+        clSVMFree(context, initWrapper);
+        clSVMFree(context, initBuffer);
+        clSVMFree(context, newWrapper);
+        clSVMFree(context, newBuffer);
+
+        return TEST_PASS;
     }
 
     cl_mutable_command_khr command = nullptr;
-    clCommandQueueWrapper queue_1, queue_2;
-
-    typedef struct
-    {
-        cl_int *pA;
-        cl_int *pB;
-        cl_int *pC;
-    } BufPtrs;
 };
 
 
