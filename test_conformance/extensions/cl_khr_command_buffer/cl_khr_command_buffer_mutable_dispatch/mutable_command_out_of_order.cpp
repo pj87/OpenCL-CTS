@@ -405,7 +405,6 @@ struct OutOfOrderTest : public BasicMutableCommandBufferTest
 
     const size_t test_global_work_size = 3 * sizeof(cl_int);
     cl_mutable_command_khr command = nullptr;
-    clUpdateMutableCommandsKHR_fn clUpdateMutableCommandsKHR = nullptr;
 
     const cl_int overwritten_pattern = 0xACDC;
     const cl_int pattern_pri = 42;
